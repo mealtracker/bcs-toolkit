@@ -1,7 +1,5 @@
 {
-  "username": "",
-  "password": "",
-  "userIdToGit":{
-    //###userid##: "gitusernamehere"
+  "githubOverwrites": {
+    "userid": "actualgithubrepo"
   }
 }

@@ -1,0 +1,10 @@
+#bcs api url
+URL=
+
+#bcs info
+EMAIL=
+PASSWORD=
+
+#Your github username (to make github api calls)
+GITHUB_USER=
+GITHUB_PASS=

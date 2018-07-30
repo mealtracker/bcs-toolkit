@@ -3,7 +3,6 @@ const request = require("request");
 const _ = require("lodash");
 const NodeGit = require("nodegit");
 const Promise = require("bluebird");
-const config = require("./config.json");
 const fs = require("fs-extra");
 const url = require("url"); // built-in utility
 const inquirer = require("inquirer");
@@ -49,11 +48,12 @@ function prompt() {
             session.cohort,
             session.hwId
           );
-          session.selectedSubmissions = await promptSubmissions(session.submissions);
+          session.selectedSubmissions = await promptSubmissions(
+            session.submissions
+          );
 
-          await processSubmissions(session.selectedSubmissions)
+          await processSubmissions(session.selectedSubmissions);
 
-          //await pullSelectedRepos(session.selectedSubmissions)
           console.log("===== Finished =====\n");
           prompt();
           break;
@@ -76,7 +76,8 @@ function prompt() {
 }
 
 function promptSubmissions(submissions) {
-  let filtered = _.filter(submissions,
+  let filtered = _.filter(
+    submissions,
     submission =>
       !_.isEqual(_.get(submission, "submissionid", 0), 0) &&
       !_.isNull(_.get(submission, "submissionDate"))
@@ -97,82 +98,124 @@ function promptSubmissions(submissions) {
       }
     ])
     .then(({ selected }) => {
-
       return selected;
     });
 }
 
-async function promptSubmissionUrl({name, submission: {UserId, AssignmentID}}) {
-  const validateGitUrl = uri => helper.isValidGitUrl(uri) ? uri : promptRebuildUrl(uri);
-  let choices = await require("./api/getUrlsFromSubmissionId").call(UserId, AssignmentID, true);
-  choices.push("Next Person");
+async function promptSubmissionUrl({
+  name,
+  submission: { UserId, AssignmentID }
+}) {
+  let dataProcessor = require("./api/getSubmissionDataById");
+  const validateGitUrl = uri =>
+    helper.isValidGitUrl(uri) ? uri : promptRebuildUrl(uri);
+  let data = await dataProcessor.call(UserId, AssignmentID, true);
+  let githubUserName = dataProcessor.githubUserName(data);
+
+  let choices = _.map(dataProcessor.urls(data), value => ({
+    name: value,
+    value
+  }));
+
+  if (githubUserName)
+    choices.push({
+      name: `Pull from github.com/${githubUserName}`,
+      value: githubUserName
+    });
+
+  choices.push({ name: "Next Person", value: "NEXT" });
 
   return inquirer
     .prompt([
       {
         type: "list",
         name: "repo",
-        message: `Pull down a repository for ${name}`, //TODO: automate filtering
+        message: `Pull down a repository for ${name} (${name})`, //TODO: automate filtering
         choices
       }
     ])
-    .then(({ repo }) => _.isEqual(repo, "Next Person") ? 'NEXT' : validateGitUrl(repo));
+    .then(async ({ repo }) => {
+      switch (repo) {
+        case "NEXT":
+          return repo;
+        case githubUserName:
+          return await promptGithubRepo(githubUserName);
+        default:
+          return validateGitUrl(repo);
+      }
+    });
+}
+
+async function promptGithubRepo(githubUserName) {
+  let choices = await require("./api/getGithubRepoUrls").call(githubUserName);
+
+  return inquirer
+    .prompt([
+      {
+        type: "list",
+        name: "repo",
+        message: `Repositories for ${githubUserName}`,
+        choices
+      }
+    ])
+    .then(({ repo }) => {
+      return repo;
+    });
 }
 
 function promptPostPull(filePath) {
   return inquirer
-      .prompt([
-        {
-          type: "list",
-          name: "post",
-          message: "Post Script",
-          choices: [
-            { name: "npm i", value: "npm i" },
-            { name: "ls", value: "ls" },
-            { name: "custom", value: "custom" },
+    .prompt([
+      {
+        type: "list",
+        name: "post",
+        message: "Post Script",
+        choices: [
+          { name: "npm i", value: "npm i" },
+          { name: "ls", value: "ls" },
+          { name: "custom", value: "custom" },
 
-            { name: "run cypress/test", value: "run something" },
-            { name: "Done", value: "next" }
-          ]
-        }
-      ])
-      .then(async ({ post }) => {
-        const execCmd = (cmd, params = []) => {
-          return new Promise((resolve, reject) => {
-            let child = spawn(cmd, params, { cwd: filePath, shell: true });
+          { name: "run cypress/test", value: "run something" },
+          { name: "Done", value: "next" }
+        ]
+      }
+    ])
+    .then(async ({ post }) => {
+      const execCmd = (cmd, params = []) => {
+        return new Promise((resolve, reject) => {
+          let child = spawn(cmd, params, { cwd: filePath, shell: true });
 
-            child.stdout.on("data", function(data) {
-              // output will be here in chunks
-              console.log("chunk");
-              console.log(`stdout: ${data}`);
-            });
-            child.stderr.on("data", data => {
-              console.log(`stderr: ${data}`);
-            });
-            child.on("close", code => {
-              console.log(`child process exited with code ${code}`);
-              resolve();
-            });
-            child.on("error", err => {
-              console.log("Failed to start subprocess.", err);
-              reject(err);
-            });
+          child.stdout.on("data", function(data) {
+            // output will be here in chunks
+            console.log(`stdout: ${data}`);
           });
-        };
+          child.stderr.on("data", data => {
+            console.log(`stderr: ${data}`);
+          });
+          child.on("close", code => {
+            console.log(`child process exited with code ${code}`);
+            resolve();
+          });
+          child.on("error", err => {
+            console.log("Failed to start subprocess.", err);
+            reject(err);
+          });
+        });
+      };
 
-        switch (post) {
-          case "next":
-            return 'NEXT'
-          case "npm i":
-            await execCmd("npm install");
-            return promptPostPull(filePath);
-          case "ls":
-            await execCmd("dir", []);
-            return promptPostPull(filePath);
-          default:
-            return promptPostPull(filePath);
-        }
-      });
+      switch (post) {
+        case "next":
+          return "NEXT";
+        case "npm i":
+          await execCmd("npm install");
+          return promptPostPull(filePath);
+        case "ls":
+          await execCmd("dir", []);
+          return promptPostPull(filePath);
+        default:
+          return promptPostPull(filePath);
+      }
+    });
 }
 function promptCustomCmd(filePath, isFirst = true) {
   return new Promise((resolve, reject) => {
@@ -240,27 +283,23 @@ function getHomeworkId(list) {
       return answer;
     });
 }
-async function pullSelectedRepos(submissionsList) {
-  let fullName, urls;
-  await Promise.each(submissionsList, async submission => {
-    fullName = `${_.get(submission, "firstname")} ${_.get(
+
+async function processSubmissions(submissions) {
+  const processSubmission = async submission => {
+    const name = `${_.get(submission, "firstname")} ${_.get(
       submission,
       "lastname"
     )}`;
-    let urls = await require("./api/getUrlsFromSubmissionId").call(
-      submission.UserId,
-      submission.AssignmentID
-    );
 
-    console.log("pull options", session.pullOptions);
-    if (_.indexOf(session.pullOptions, "autoFindAndCheckout") >= 0) {
-      //no prompt, will try best guess
-      //use ls-remote within nodegit
-    } else {
-      //Prompt a submission
-      return await promptSubmission(submission);
-    }
-  });
+    const url = await promptSubmissionUrl({ name, submission });
+    if (_.isEqual(url, "NEXT")) return submission;
+    let localRepoPath = `./repos/${name}`;
+    fs.emptyDirSync(localRepoPath);
+    await require("./api/pullRepo").call(url, localRepoPath);
+    await promptPostPull(`./repos/${name}`);
+    return processSubmission(submission);
+  };
+  return await Promise.each(submissions, processSubmission);
 }
 
 function promptRebuildUrl(uri) {
@@ -271,33 +310,33 @@ function promptRebuildUrl(uri) {
   let choices = choices1.concat(choices2);
 
   let formatted = () =>
-      inquirer
-        .prompt([
-          {
-            type: "list",
-            name: "userName",
-            message: "Choose the username for the url",
-            choices
-          },
-          {
-            type: "list",
-            name: "repoName",
-            message: "Choose the repo name for the url",
-            choices
-          },
-          {
-            type: "confirm",
-            name: "isOk",
-            message: ({ userName, repoName }) =>
-              `Is this url right? https://github.com/${userName}/${repoName}`
-          }
-        ])
-        .then(({ userName, repoName, isOk }) => {
-          if (!isOk) return formatted();
-          return `https://github.com/${userName}/${repoName}`
-        });
+    inquirer
+      .prompt([
+        {
+          type: "list",
+          name: "userName",
+          message: "Choose the username for the url",
+          choices
+        },
+        {
+          type: "list",
+          name: "repoName",
+          message: "Choose the repo name for the url",
+          choices
+        },
+        {
+          type: "confirm",
+          name: "isOk",
+          message: ({ userName, repoName }) =>
+            `Is this url right? https://github.com/${userName}/${repoName}`
+        }
+      ])
+      .then(({ userName, repoName, isOk }) => {
+        if (!isOk) return formatted();
+        return `https://github.com/${userName}/${repoName}`;
+      });
 
-    return formatted();
+  return formatted();
 }
 
 function start() {
@@ -315,20 +354,6 @@ function start() {
 
     prompt();
   });
-}
-
-async function processSubmissions(submissions){
-  const processSubmission = async (submission) => {
-    const name = `${_.get(submission, "firstname")} ${_.get(submission, "lastname")}`;
-    const url = await promptSubmissionUrl({name, submission});
-    if(_.isEqual(url, 'NEXT')) return submission;
-    let localRepoPath = `./repos/${name}`;
-    fs.emptyDirSync(localRepoPath);
-    await require("./api/pullRepo").call(url, localRepoPath);
-    await promptPostPull(`./repos/${name}`);
-    return processSubmission(submission)
-  }
-  return await Promise.each(submissions, processSubmission);
 }
 
 function write(session = {}, cb) {

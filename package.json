@@ -1,26 +1,23 @@
 {
   "name": "bcs-toolkit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "preinstall": "nvm use 8.11.3 || echo nvm not found: check node version && pause",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Brian Noriega",
   "license": "MIT",
-  "devDependencies": {
-    "electron": "^2.0.5"
-  },
   "dependencies": {
+    "@octokit/rest": "^15.9.4",
     "bluebird": "^3.5.1",
     "commander": "^2.16.0",
     "dotenv": "^6.0.0",
     "fs-extra": "^6.0.1",
     "inquirer": "^6.0.0",
     "lodash": "^4.17.10",
-    "nodegit": "^0.22.0",
+    "nodegit": "^0.21.2",
     "promisify-node": "^0.4.0",
     "request": "^2.85.0",
     "request-promise": "^4.2.2"
