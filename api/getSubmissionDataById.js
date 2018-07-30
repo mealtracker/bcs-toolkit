@@ -3,7 +3,7 @@ const date = new Date();
 const Promise = require("bluebird");
 const inquirer = require("inquirer");
 const config = require("../config.json");
-const overwrites = config.githubOverwrites;
+const overwrites = config.githubOverwrites || {};
 
 module.exports = {
   async call(userId, assignmentId) {
