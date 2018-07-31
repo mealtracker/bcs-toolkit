@@ -1,16 +1,12 @@
 require("dotenv").config();
-const request = require("request");
 const _ = require("lodash");
-const NodeGit = require("nodegit");
 const Promise = require("bluebird");
+const path = require("path");
 const fs = require("fs-extra");
-const url = require("url"); // built-in utility
 const inquirer = require("inquirer");
 const ui = new inquirer.ui.BottomBar();
 const login = require("./api/login");
-const util = require("util");
 const helper = require("./api/util");
-const exec = util.promisify(require("child_process").exec);
 const { spawn } = require("child_process");
 
 let session;
@@ -18,9 +14,9 @@ let session;
 function prompt() {
   let choices = [];
 
-  if (!_.isEmpty(session.jwt)) choices.push("Start Process");
-
-  choices.push("Login", "Show Session Data", "Flush Repo Folders");
+  if (!_.isEmpty(session.jwt)) choices.push("Start Wizard");
+  choices.push(new inquirer.Separator());
+  choices.push("Login", new inquirer.Separator(), "Show Session Data", "Flush Repo Folders", "Exit");
 
   inquirer
     .prompt([
@@ -28,40 +24,32 @@ function prompt() {
         type: "list",
         name: "commandType",
         message: "What do you want to do?",
+        pageSize: 100,
         choices
       }
     ])
     .then(async ({ commandType }) => {
       switch (commandType) {
+        case "Exit":
+            return console.log('Goodbye.')
         case "Login":
           session.jwt = await login.call();
           ui.log.write("You are logged in.");
           write(session, prompt);
           break;
-        case "Start Process":
+        case "Start Wizard":
           session.cohort = await getCohort();
-          session.hwId = await getHomeworkId(
-            await require("./api/getHomeworkList").call(session.cohort)
-          );
-          //session.pullOptions = await getPullOptions();
-          session.submissions = await require("./api/getSubmissions").call(
-            session.cohort,
-            session.hwId
-          );
-          session.selectedSubmissions = await promptSubmissions(
-            session.submissions
-          );
-
+          session.hwId = await getHomeworkId(await require("./api/getHomeworkList").call(session.cohort));
+          session.submissions = await require("./api/getSubmissions").call(session.cohort, session.hwId);
+          session.selectedSubmissions = await promptSubmissions(session.submissions);
           await processSubmissions(session.selectedSubmissions);
-
           console.log("===== Finished =====\n");
           prompt();
           break;
         case "Show Session Data":
-          console.log(session);
+          console.table(session);
           prompt();
           break;
-
         case "Flush Repo Folders":
           fs.emptyDirSync("./tmp");
           fs.emptyDirSync("./repos");
@@ -118,19 +106,23 @@ async function promptSubmissionUrl({
   }));
 
   if (githubUserName)
+    choices.push(new inquirer.Separator());
     choices.push({
       name: `Pull from github.com/${githubUserName}`,
       value: githubUserName
     });
 
+  choices.push(new inquirer.Separator());
+ // choices.push({ name: "Overwrite Github Username", value: "NEXT" });
   choices.push({ name: "Next Person", value: "NEXT" });
 
   return inquirer
     .prompt([
       {
         type: "list",
-        name: "repo",
-        message: `Pull down a repository for ${name} (${name})`, //TODO: automate filtering
+          pageSize: 100,
+          name: "repo",
+        message: `Pull down a repository for ${name} (${UserId})`, //TODO: automate filtering
         choices
       }
     ])
@@ -154,7 +146,8 @@ async function promptGithubRepo(githubUserName) {
       {
         type: "list",
         name: "repo",
-        message: `Repositories for ${githubUserName}`,
+      pageSize: 100,
+          message: `Repositories for ${githubUserName}`,
         choices
       }
     ])
@@ -163,90 +156,77 @@ async function promptGithubRepo(githubUserName) {
     });
 }
 
+function launchTerminal(filePath, type="cmd"){
+    const fullPath = path.join(__dirname, filePath);
+    let cmd = spawn(type, ['/K', `start ${type}.exe`], { cwd: fullPath, detached: true})
+    cmd.unref()
+    return 'OK'
+}
+
+function performCommandInBackground(path, cmd, params, options = {}){
+  return new Promise((resolve, reject) => {
+      let child = spawn(cmd, params, { ...options, cwd: filePath, shell: true });
+
+      child.stdout.on("data", function(data) {
+          // output will be here in chunks
+          console.log(`stdout: ${data}`);
+      });
+      child.stderr.on("data", data => {
+          console.log(`stderr: ${data}`);
+      });
+      child.on("close", code => {
+          console.log(`child process exited with code ${code}`);
+          resolve();
+      });
+      child.on("error", err => {
+          console.log("Failed to start subprocess.", err);
+          reject(err);
+      });
+  });
+}
+
 function promptPostPull(filePath) {
   return inquirer
     .prompt([
       {
         type: "list",
-        name: "post",
+      pageSize: 100,
+
+          name: "post",
         message: "Post Script",
         choices: [
-          { name: "npm i", value: "npm i" },
-          { name: "ls", value: "ls" },
-          { name: "custom", value: "custom" },
-
-          { name: "run cypress/test", value: "run something" },
-          { name: "Done", value: "next" }
+            { name: `Finished with ${filePath}`, value: "next" },
+            new inquirer.Separator(),
+            { name: "Send 'npm i'", value: "npm i" },
+            { name: "List files/folders", value: "ls" },
+            new inquirer.Separator(),
+            { name: `Cmd window for ${filePath}`, value: '_new' },
+            { name: `Bash window for ${filePath}`, value: '_newBash' },
         ]
       }
     ])
     .then(async ({ post }) => {
-      const execCmd = (cmd, params = []) => {
-        return new Promise((resolve, reject) => {
-          let child = spawn(cmd, params, { cwd: filePath, shell: true });
-
-          child.stdout.on("data", function(data) {
-            // output will be here in chunks
-            console.log(`stdout: ${data}`);
-          });
-          child.stderr.on("data", data => {
-            console.log(`stderr: ${data}`);
-          });
-          child.on("close", code => {
-            console.log(`child process exited with code ${code}`);
-            resolve();
-          });
-          child.on("error", err => {
-            console.log("Failed to start subprocess.", err);
-            reject(err);
-          });
-        });
-      };
 
       switch (post) {
         case "next":
           return "NEXT";
-        case "npm i":
-          await execCmd("npm install");
+        case "_newBash":
+          launchTerminal(filePath, "bash.exe")
           return promptPostPull(filePath);
-        case "ls":
-          await execCmd("dir", []);
-          return promptPostPull(filePath);
+        case "_new":
+          launchTerminal(filePath, "cmd.exe")
+            return promptPostPull(filePath);
+          case "npm i":
+            await performCommandInBackground(filePath, 'npm install')
+            return promptPostPull(filePath);
+          case "ls":
+            await performCommandInBackground(filePath, 'dir') //todo: account for macos
+            return promptPostPull(filePath);
         default:
           return promptPostPull(filePath);
       }
     });
 }
-function promptCustomCmd(filePath, isFirst = true) {
-  return new Promise((resolve, reject) => {
-    inquirer
-      .prompt([
-        {
-          type: "input",
-          name: "cmd",
-          message: isFirst ? "Enter your command.  Type :exit to exit \n" : "$ "
-        }
-      ])
-      .then(({ cmd }) => {
-        if (_.isEqual(cmd, ":exit")) return resolve("DONE");
-        let child = spawn(cmd, [], { cwd: filePath, shell: true });
-
-        child.stdout.on("data", function(chunk) {
-          // output will be here in chunks
-          console.log("$ ", chunk.toString());
-        });
-        child.on("close", code => {
-          if (!_.isEqual(code, 0))
-            console.log(`child process exited with code ${code}`);
-          if (!_.isEqual(cmd, ":exit")) resolve("OK");
-          return promptPostPull(filePath);
-        });
-      });
-  });
-}
-//set cohort
-//set homework id
-//set ta list
 
 function getCohort() {
   return inquirer
@@ -254,7 +234,9 @@ function getCohort() {
       {
         type: "list",
         name: "cohort",
-        message: "Select Cohort?",
+          pageSize: 4,
+
+          message: "Select Cohort?",
         choices: [
           { name: "Mon/Wed", value: 499 },
           { name: "Tues/Thu", value: 406 }
@@ -265,15 +247,17 @@ function getCohort() {
       return cohort;
     });
 }
+
 function getHomeworkId(list) {
   let choices = _.map(list, item => {
     return { name: item.Name, value: item.ID };
   });
-
+  choices.push(new inquirer.Separator());
   return inquirer
     .prompt([
       {
         type: "list",
+        pageSize: 100,
         name: "answer",
         message: "Select Homework",
         choices: choices
@@ -314,21 +298,24 @@ function promptRebuildUrl(uri) {
       .prompt([
         {
           type: "list",
+            pageSize: 100,
           name: "userName",
-          message: "Choose the username for the url",
+          message: "Choose the USERNAME for the url",
           choices
         },
         {
           type: "list",
-          name: "repoName",
-          message: "Choose the repo name for the url",
+            pageSize: 100,
+
+            name: "repoName",
+          message: "Choose the REPOSITORY name for the url",
           choices
         },
         {
           type: "confirm",
           name: "isOk",
           message: ({ userName, repoName }) =>
-            `Is this url right? https://github.com/${userName}/${repoName}`
+            `git clone from: https://github.com/${userName}/${repoName}?`
         }
       ])
       .then(({ userName, repoName, isOk }) => {
